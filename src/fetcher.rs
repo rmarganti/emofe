@@ -21,7 +21,7 @@ impl EmoFetcher {
     /// Given a channel index page, return a list of URLs for emotes.
     pub fn emote_page_urls_for_index_page(
         &self,
-        index_url: String,
+        index_url: &String,
     ) -> Result<Vec<String>, Box<dyn Error>> {
         println!("Fetching index");
         let document = self.document_for_url(index_url)?;
@@ -31,7 +31,11 @@ impl EmoFetcher {
     }
 
     /// Download the emote associated with each of the given emote URLs.
-    pub fn download_all_emotes(&self, emote_urls: Vec<String>) -> DownloadAllEmotesResult {
+    pub fn download_all_emotes(
+        &self,
+        emote_urls: &Vec<String>,
+        output_dir: &Option<String>,
+    ) -> DownloadAllEmotesResult {
         let emotes_info: Vec<parser::ImageInfo> = emote_urls
             .iter()
             .map(|emote_url| self.fetch_emote_info(emote_url))
@@ -40,9 +44,9 @@ impl EmoFetcher {
         let mut result = DownloadAllEmotesResult::new();
 
         for emote_info in &emotes_info {
-            match self.download_emote(emote_info) {
+            match self.download_emote(emote_info, output_dir) {
                 Ok(_) => result.add_success(emote_info.clone()),
-                Err(_) => result.add_failure(emote_info.clone()),
+                Err(_) => {result.add_failure(emote_info.clone())},
             };
         }
 
@@ -55,12 +59,12 @@ impl EmoFetcher {
         absolute_url.push_str(url);
 
         println!("Fetching {url}");
-        let document = self.document_for_url(absolute_url).unwrap();
+        let document = self.document_for_url(&absolute_url).unwrap();
         parser::parse_emote_document(&document)
     }
 
     /// Get a parsed Document for the given URL.
-    fn document_for_url(&self, url: String) -> Result<Html, Box<dyn Error>> {
+    fn document_for_url(&self, url: &String) -> Result<Html, Box<dyn Error>> {
         let body = self.client.get(&url).call()?.into_string()?;
         let document = Html::parse_document(body.as_str());
 
@@ -68,13 +72,17 @@ impl EmoFetcher {
     }
 
     // Download the an emote to the desktop
-    fn download_emote(&self, emote_info: &parser::ImageInfo) -> Result<(), Box<dyn Error>> {
+    fn download_emote(
+        &self,
+        emote_info: &parser::ImageInfo,
+        output_dir: &Option<String>,
+    ) -> Result<(), Box<dyn Error>> {
         println!("Downloading {}", emote_info.name());
 
         let response = self.client.get(emote_info.url()).call()?;
 
         let file_path = emote_info
-            .file_path(&response)
+            .file_path(&response, output_dir)
             .expect("Unable to get destination path");
 
         let mut file = std::fs::File::create(file_path)?;

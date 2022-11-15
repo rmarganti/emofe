@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use regex::Regex;
 use scraper::{Html, Selector};
 use ureq::Response;
@@ -56,9 +58,15 @@ impl ImageInfo {
 
     /// Determine the destination file path for
     /// an emote given its file name and content-type.
-    pub fn file_path(&self, response: &Response) -> Option<std::path::PathBuf> {
-        let mut file_path = dirs::desktop_dir()?;
-        file_path.push("emotes");
+    pub fn file_path(
+        &self,
+        response: &Response,
+        output_dir: &Option<String>,
+    ) -> Option<std::path::PathBuf> {
+        let mut file_path = match output_dir {
+            Some(dir) => PathBuf::from(dir),
+            None => std::env::current_dir().unwrap(),
+        };
 
         let mut file_name = self.name().to_lowercase();
         let content_type = response.header("content-type");

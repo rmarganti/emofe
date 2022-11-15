@@ -1,6 +1,6 @@
 use regex::Regex;
-use reqwest::blocking::Response;
 use scraper::{Html, Selector};
+use ureq::Response;
 
 /// Parse all the emote URLs out of the given index HTML document.
 pub fn parse_index_document(document: &Html) -> Vec<String> {
@@ -38,6 +38,7 @@ pub fn parse_emote_document(document: &Html) -> ImageInfo {
     ImageInfo { name, url }
 }
 
+#[derive(Debug, Clone)]
 pub struct ImageInfo {
     name: String,
 
@@ -53,16 +54,19 @@ impl ImageInfo {
         &self.url
     }
 
+    /// Determine the destination file path for
+    /// an emote given its file name and content-type.
     pub fn file_path(&self, response: &Response) -> Option<std::path::PathBuf> {
         let mut file_path = dirs::desktop_dir()?;
         file_path.push("emotes");
 
         let mut file_name = self.name().to_lowercase();
+        let content_type = response.header("content-type");
 
-        let extension = match response.headers().get(reqwest::header::CONTENT_TYPE) {
-            Some(header) => match header.to_str() {
-                Ok("image/png") => Some(".png"),
-                Ok("image/gif") => Some(".gif"),
+        let extension = match content_type {
+            Some(header) => match header {
+                "image/png" => Some(".png"),
+                "image/gif" => Some(".gif"),
                 _ => None,
             },
             None => None,
@@ -75,12 +79,5 @@ impl ImageInfo {
         file_path.push(file_name);
 
         Some(file_path)
-    }
-
-    pub fn clone(&self) -> ImageInfo {
-        ImageInfo {
-            name: self.name.to_string(),
-            url: self.url.to_string(),
-        }
     }
 }

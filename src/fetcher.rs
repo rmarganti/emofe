@@ -1,19 +1,21 @@
 use crate::parser;
-use reqwest::blocking::Client;
-use reqwest::Error as ReqwestError;
 use scraper::Html;
 use std::error::Error;
-use std::io::Cursor;
+use std::time::Duration;
+use ureq::{Agent, AgentBuilder};
 
 pub struct EmoFetcher {
-    client: Client,
+    client: Agent,
 }
 
 impl EmoFetcher {
     pub fn new() -> Self {
-        EmoFetcher {
-            client: Client::new(),
-        }
+        let agent: Agent = AgentBuilder::new()
+            .timeout_read(Duration::from_secs(5))
+            .timeout_write(Duration::from_secs(5))
+            .build();
+
+        EmoFetcher { client: agent }
     }
 
     /// Given a channel index page, return a list of URLs for emotes.
@@ -58,8 +60,8 @@ impl EmoFetcher {
     }
 
     /// Get a parsed Document for the given URL.
-    fn document_for_url(&self, url: String) -> Result<Html, ReqwestError> {
-        let body = self.client.get(url).send()?.text()?;
+    fn document_for_url(&self, url: String) -> Result<Html, Box<dyn Error>> {
+        let body = self.client.get(&url).call()?.into_string()?;
         let document = Html::parse_document(body.as_str());
 
         Ok(document)
@@ -69,16 +71,15 @@ impl EmoFetcher {
     fn download_emote(&self, emote_info: &parser::ImageInfo) -> Result<(), Box<dyn Error>> {
         println!("Downloading {}", emote_info.name());
 
-        let response = self.client.get(emote_info.url()).send()?;
+        let response = self.client.get(emote_info.url()).call()?;
 
         let file_path = emote_info
             .file_path(&response)
             .expect("Unable to get destination path");
 
         let mut file = std::fs::File::create(file_path)?;
-        let bytes = response.bytes()?;
-        let mut content = Cursor::new(bytes);
-        std::io::copy(&mut content, &mut file)?;
+        let mut reader = response.into_reader();
+        std::io::copy(&mut reader, &mut file)?;
 
         Ok(())
     }
@@ -107,5 +108,9 @@ impl DownloadAllEmotesResult {
 
     pub fn has_failures(&self) -> bool {
         !self.failed.is_empty()
+    }
+
+    pub fn failures(&self) -> &Vec<parser::ImageInfo> {
+        &self.failed
     }
 }

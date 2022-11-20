@@ -1,7 +1,8 @@
 use crate::parser;
 use scraper::Html;
-use std::error::Error;
-use std::time::Duration;
+use std::fmt;
+use std::io::Write;
+use std::{io::stdout, time::Duration};
 use ureq::{Agent, AgentBuilder};
 
 pub struct EmoFetcher {
@@ -19,10 +20,7 @@ impl EmoFetcher {
     }
 
     /// Given a channel index page, return a list of URLs for emotes.
-    pub fn emote_page_urls_for_index_page(
-        &self,
-        index_url: &String,
-    ) -> Result<Vec<String>, Box<dyn Error>> {
+    pub fn emote_page_urls_for_index_page(&self, index_url: &String) -> crate::Result<Vec<String>> {
         println!("Fetching index");
         let document = self.document_for_url(index_url)?;
         let urls = parser::parse_index_document(&document);
@@ -35,49 +33,68 @@ impl EmoFetcher {
         &self,
         emote_urls: &Vec<String>,
         output_dir: &Option<String>,
-    ) -> DownloadAllEmotesResult {
-        let emotes_info: Vec<parser::ImageInfo> = emote_urls
-            .iter()
-            .map(|emote_url| self.fetch_emote_info(emote_url))
-            .collect();
+    ) -> crate::Result<DownloadAllEmotesResult> {
+        println!("Fetching info for {} emotes", emote_urls.len());
 
         let mut result = DownloadAllEmotesResult::new();
 
+        let emotes_info: Vec<parser::ImageInfo> = emote_urls
+            .iter()
+            .filter_map(|emote_url| match self.fetch_emote_info(emote_url) {
+                Ok(emote) => Some(emote),
+                Err(e) => {
+                    result.add_failure("unknown".to_string(), e.to_string());
+                    None
+                }
+            })
+            .collect();
+
+        println!("");
+
+        println!("Downloading {} emotes", emotes_info.len());
+
         for emote_info in &emotes_info {
             match self.download_emote(emote_info, output_dir) {
-                Ok(_) => result.add_success(emote_info.clone()),
-                Err(_) => {result.add_failure(emote_info.clone())},
+                Ok(_) => {}
+                Err(e) => {
+                    result.add_failure(emote_info.name().to_string(), e.to_string());
+                }
             };
         }
 
-        result
+        println!("");
+
+        Ok(result)
     }
 
     /// Get the name and image URL for the emote page at the given URL.
-    fn fetch_emote_info(&self, url: &String) -> parser::ImageInfo {
+    fn fetch_emote_info(&self, url: &String) -> crate::Result<parser::ImageInfo> {
         let mut absolute_url = String::from("https://twitchemotes.com");
         absolute_url.push_str(url);
 
-        println!("Fetching {url}");
-        let document = self.document_for_url(&absolute_url).unwrap();
-        parser::parse_emote_document(&document)
+        print!(".");
+        stdout().flush()?;
+
+        let document = self.document_for_url(&absolute_url)?;
+        Ok(parser::parse_emote_document(&document))
     }
 
     /// Get a parsed Document for the given URL.
-    fn document_for_url(&self, url: &String) -> Result<Html, Box<dyn Error>> {
+    fn document_for_url(&self, url: &String) -> crate::Result<Html> {
         let body = self.client.get(&url).call()?.into_string()?;
         let document = Html::parse_document(body.as_str());
 
         Ok(document)
     }
 
-    // Download the an emote to the desktop
+    // Download a single emote.
     fn download_emote(
         &self,
         emote_info: &parser::ImageInfo,
         output_dir: &Option<String>,
-    ) -> Result<(), Box<dyn Error>> {
-        println!("Downloading {}", emote_info.name());
+    ) -> crate::Result<()> {
+        print!(".");
+        stdout().flush()?;
 
         let response = self.client.get(emote_info.url()).call()?;
 
@@ -94,31 +111,36 @@ impl EmoFetcher {
 }
 
 pub struct DownloadAllEmotesResult {
-    successful: Vec<parser::ImageInfo>,
-    failed: Vec<parser::ImageInfo>,
+    failures: Vec<EmoteFailure>,
+}
+
+pub struct EmoteFailure {
+    name: String,
+    message: String,
+}
+
+impl fmt::Display for EmoteFailure {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.message)
+    }
 }
 
 impl DownloadAllEmotesResult {
     pub fn new() -> Self {
         DownloadAllEmotesResult {
-            successful: Vec::new(),
-            failed: Vec::new(),
+            failures: Vec::new(),
         }
     }
 
-    pub fn add_success(&mut self, image_info: parser::ImageInfo) {
-        self.successful.push(image_info);
-    }
-
-    pub fn add_failure(&mut self, image_info: parser::ImageInfo) {
-        self.failed.push(image_info);
+    pub fn add_failure(&mut self, name: String, message: String) {
+        self.failures.push(EmoteFailure { name, message });
     }
 
     pub fn has_failures(&self) -> bool {
-        !self.failed.is_empty()
+        !self.failures.is_empty()
     }
 
-    pub fn failures(&self) -> &Vec<parser::ImageInfo> {
-        &self.failed
+    pub fn failures(&self) -> &Vec<EmoteFailure> {
+        &self.failures
     }
 }
